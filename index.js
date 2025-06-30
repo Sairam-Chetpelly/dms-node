@@ -9,6 +9,7 @@ const documentRoutes = require('./routes/documents');
 const folderRoutes = require('./routes/folders');
 const tagRoutes = require('./routes/tags');
 const userRoutes = require('./routes/users');
+const invoiceRoutes = require('./routes/invoices');
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/folders', folderRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

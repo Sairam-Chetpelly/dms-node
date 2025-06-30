@@ -45,13 +45,17 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 
 router.get('/', auth, async (req, res) => {
   try {
-    const { folder, starred, shared, search } = req.query;
+    const { folder, starred, shared, search, invoices } = req.query;
     let query = {};
 
     if (shared === 'true') {
       query = { sharedWith: req.user._id };
     } else if (req.query.mydrives === 'true') {
       query = { owner: req.user._id, folder: null, isShared: false };
+    } else if (invoices === 'true') {
+      const InvoiceRecord = require('../models/InvoiceRecord');
+      const invoiceRecords = await InvoiceRecord.find({ owner: req.user._id }).populate('document');
+      return res.json(invoiceRecords.map(record => record.document));
     } else {
       query = { owner: req.user._id };
     }
