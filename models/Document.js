@@ -16,7 +16,9 @@ const documentSchema = new mongoose.Schema({
     read: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     write: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     delete: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
-  }
+  },
+  content: { type: String, default: '' },
+  content: { type: String, default: '' }
 }, {
   timestamps: true
 });
