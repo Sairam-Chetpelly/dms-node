@@ -10,6 +10,7 @@ const folderRoutes = require('./routes/folders');
 const tagRoutes = require('./routes/tags');
 const userRoutes = require('./routes/users');
 const invoiceRoutes = require('./routes/invoices');
+const chatbotRoutes = require('./routes/chatbot');
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/api/folders', folderRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

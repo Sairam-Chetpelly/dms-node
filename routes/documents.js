@@ -6,7 +6,9 @@ const pdf = require('pdf-parse');
 const Tesseract = require('tesseract.js');
 const pdf2pic = require('pdf2pic');
 const Document = require('../models/Document');
+const DocumentContent = require('../models/DocumentContent');
 const auth = require('../middleware/auth');
+const { extractPDFContent } = require('../utils/pdfExtractor');
 
 const router = express.Router();
 
@@ -104,6 +106,12 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     });
 
     await document.save();
+    
+    // Store extracted content separately for search
+    if (content && req.file.mimetype === 'application/pdf') {
+      await extractPDFContent(req.file.path, document._id);
+    }
+    
     await document.populate(['folder', 'tags', 'owner']);
     
     res.status(201).json(document);
