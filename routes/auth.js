@@ -1,6 +1,8 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Department = require('../models/Department');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -14,8 +16,27 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    const user = new User({ name, email, password, role: role || 'employee', department });
+    // Find department by name or ObjectId
+    let departmentDoc;
+    if (mongoose.Types.ObjectId.isValid(department)) {
+      departmentDoc = await Department.findById(department);
+    } else {
+      departmentDoc = await Department.findOne({ name: department.toLowerCase() });
+    }
+    
+    if (!departmentDoc) {
+      return res.status(400).json({ message: 'Department not found' });
+    }
+
+    const user = new User({ 
+      name, 
+      email, 
+      password, 
+      role: role || 'employee', 
+      department: departmentDoc._id 
+    });
     await user.save();
+    await user.populate('department');
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     

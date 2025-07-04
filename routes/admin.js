@@ -77,7 +77,7 @@ router.delete('/employees/:id', auth, adminOnly, async (req, res) => {
 });
 
 // Department CRUD
-router.get('/departments', auth, adminOnly, async (req, res) => {
+router.get('/departments', async (req, res) => {
   try {
     const departments = await Department.find({ isActive: true }).sort({ displayName: 1 });
     const departmentStats = await Promise.all(
