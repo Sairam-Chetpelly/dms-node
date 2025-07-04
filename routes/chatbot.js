@@ -11,7 +11,7 @@ const router = express.Router();
 
 // Website content knowledge base
 const WEBSITE_CONTENT = `
-Odoo Documents Clone - A document management system with features:
+Documents Clone - A document management system with features:
 - Upload, view, download, delete documents
 - Folder organization with hierarchical structures
 - Search and filter documents
@@ -41,6 +41,26 @@ async function searchDocumentContent(query, userId) {
   }
 }
 
+// Call OpenRouter API
+async function callOpenRouter(messages, maxTokens = 300) {
+  const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+    model: 'google/gemma-2-9b-it:free',
+    messages,
+    max_tokens: maxTokens,
+    temperature: 0.7
+  }, {
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'http://localhost:5000',
+      'X-Title': 'Document Management Chatbot'
+    }
+  });
+  return response.data.choices[0].message.content;
+}
+
+
+
 // AI response function with document search
 async function generateAIResponse(query, userId) {
   const lowerQuery = query.toLowerCase();
@@ -49,53 +69,45 @@ async function generateAIResponse(query, userId) {
   const documentResults = await searchDocumentContent(query, userId);
   
   if (documentResults.length > 0) {
-    // Use OpenAI to generate response with document context
-    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your_openai_api_key_here') {
-      try {
-        const contextData = documentResults.map(result => {
-          const docName = result.document[0]?.originalName || 'Unknown';
-          const snippet = result.content.substring(0, 500);
-          return `Document: ${docName}\nContent: ${snippet}`;
-        }).join('\n\n');
+    const contextData = documentResults.map(result => {
+      const docName = result.document[0]?.originalName || 'Unknown';
+      const snippet = result.content.substring(0, 500);
+      return `Document: ${docName}\nContent: ${snippet}`;
+    }).join('\n\n');
 
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a helpful assistant for a document management system. Answer the user's question based on the following document content. Provide specific information from the documents and mention which document contains the information.`
-            },
-            {
-              role: 'user',
-              content: `Question: ${query}\n\nDocument Content:\n${contextData}`
-            }
-          ],
-          max_tokens: 300,
-          temperature: 0.7
-        }, {
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        let aiResponse = response.data.choices[0].message.content;
-        
-        // Add download links
-        aiResponse += '\n\n**Related Documents:**\n';
-        documentResults.forEach((result, index) => {
-          const docName = result.document[0]?.originalName || 'Unknown';
-          const docId = result.document[0]?._id;
-          aiResponse += `${index + 1}. <a href="http://localhost:5000/api/documents/${docId}/download" target="_blank">${docName}</a>\n`;
-        });
-        
-        return aiResponse;
-      } catch (error) {
-        console.error('OpenAI API error:', error);
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a helpful assistant for a document management system. Answer the user's question based on the following document content. Provide specific information from the documents and mention which document contains the information.`
+      },
+      {
+        role: 'user',
+        content: `Question: ${query}\n\nDocument Content:\n${contextData}`
       }
+    ];
+
+    // Use OpenRouter API
+    let aiResponse;
+    try {
+      if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
+        aiResponse = await callOpenRouter(messages, 300);
+      }
+    } catch (error) {
+      console.error('OpenRouter API error:', error.response?.data || error.message);
+    }
+
+    if (aiResponse) {
+      // Add download links
+      aiResponse += '\n\n**Related Documents:**\n';
+      documentResults.forEach((result, index) => {
+        const docName = result.document[0]?.originalName || 'Unknown';
+        const docId = result.document[0]?._id;
+        aiResponse += `${index + 1}. <a href="http://localhost:5000/api/documents/${docId}/download" target="_blank">${docName}</a>\n`;
+      });
+      return aiResponse;
     }
     
-    // Fallback response
+    // Fallback response if AI APIs fail
     let response = "I found relevant documents:\n\n";
     documentResults.forEach((result, index) => {
       const docName = result.document[0]?.originalName || 'Unknown';
@@ -109,41 +121,33 @@ async function generateAIResponse(query, userId) {
   }
   
   // Check if query is related to website content
-  const websiteKeywords = ['document', 'upload', 'folder', 'tag', 'search', 'file', 'odoo', 'feature', 'api', 'login', 'register', 'help', 'how', 'website', 'use', 'what', 'system', 'management', 'secure', 'security', 'safe', 'visible', 'see', 'access', 'private', 'share', 'sharing', 'user', 'users', 'work'];
+  const websiteKeywords = ['document', 'upload', 'folder', 'tag', 'search', 'file', 'feature', 'api', 'login', 'register', 'help', 'how', 'website', 'use', 'what', 'system', 'management', 'secure', 'security', 'safe', 'visible', 'see', 'access', 'private', 'share', 'sharing', 'user', 'users', 'work'];
   const isRelated = websiteKeywords.some(keyword => lowerQuery.includes(keyword));
   
-  if (!isRelated) {
-    return "I can only help with questions about our document management system features and functionality.";
-  }
+  // if (!isRelated) {
+  //   return "I can only help with questions about our document management system features and functionality.";
+  // }
 
-  // Try OpenAI first if API key is available
-  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your_openai_api_key_here') {
-    try {
-      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a helpful assistant for a document management system. Only answer questions related to the following features: ${WEBSITE_CONTENT}. Keep responses concise and helpful.`
-          },
-          {
-            role: 'user',
-            content: query
-          }
-        ],
-        max_tokens: 150,
-        temperature: 0.7
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      return response.data.choices[0].message.content;
-    } catch (error) {
-      console.error('OpenAI API error:', error.response?.data || error.message);
+  // Try AI APIs for general queries
+  const messages = [
+    {
+      role: 'system',
+      content: `You are a helpful assistant for a document management system. Only answer questions related to the following features: ${WEBSITE_CONTENT}. Keep responses concise and helpful.`
+    },
+    {
+      role: 'user',
+      content: query
     }
+  ];
+
+  // Use OpenRouter API
+  try {
+    if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
+      console.log('Using OpenRouter API');
+      return await callOpenRouter(messages, 150);
+    }
+  } catch (error) {
+    console.error('OpenRouter API error:', error.response?.data || error.message);
   }
 
   // Fallback responses
@@ -166,7 +170,7 @@ async function generateAIResponse(query, userId) {
     return "Use the login page to access your account or register for a new account. Authentication is required to access the document management features.";
   }
   if (lowerQuery.includes('website') || lowerQuery.includes('use') || lowerQuery.includes('what')) {
-    return "This is a document management system similar to Odoo Documents. You can upload, organize, and manage your files with features like hierarchical folders, colored tags, search functionality, and secure user authentication. It helps you keep all your documents organized in one place with easy access and sharing capabilities.";
+    return "This is a document management system. You can upload, organize, and manage your files with features like hierarchical folders, colored tags, search functionality, and secure user authentication. It helps you keep all your documents organized in one place with easy access and sharing capabilities.";
   }
   if (lowerQuery.includes('visible') || lowerQuery.includes('see') || lowerQuery.includes('access') || lowerQuery.includes('private')) {
     return "Your uploaded files are completely private and secure. Only you can see and access your documents. Other users cannot view your files unless you explicitly share them. Each user has their own private document space.";
