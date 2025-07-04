@@ -1,5 +1,5 @@
 {
-  "name": "odoo-documents-server",
+  "name": "document-management-system",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {

@@ -11,7 +11,7 @@ const router = express.Router();
 
 // Website content knowledge base
 const WEBSITE_CONTENT = `
-Documents Clone - A document management system with features:
+Documents Management System - A document management system with features:
 - Upload, view, download, delete documents
 - Folder organization with hierarchical structures
 - Search and filter documents

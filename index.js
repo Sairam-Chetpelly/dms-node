@@ -92,6 +92,7 @@ mongoose.connect(process.env.MONGODB_URI, {
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+    server.timeout = 300000;
     
     // Handle server errors
     server.on('error', (error) => {
