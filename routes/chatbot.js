@@ -52,7 +52,7 @@ async function callOpenRouter(messages, maxTokens = 300) {
     headers: {
       'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:5000',
+      'HTTP-Referer': process.env.BACKEND_URL || 'http://localhost:5000',
       'X-Title': 'Document Management Chatbot'
     }
   });
@@ -102,7 +102,7 @@ async function generateAIResponse(query, userId) {
       documentResults.forEach((result, index) => {
         const docName = result.document[0]?.originalName || 'Unknown';
         const docId = result.document[0]?._id;
-        aiResponse += `${index + 1}. <a href="http://localhost:5000/api/documents/${docId}/download" target="_blank">${docName}</a>\n`;
+        aiResponse += `${index + 1}. <a href="${process.env.BACKEND_URL || 'http://localhost:5000'}/api/documents/${docId}/download" target="_blank">${docName}</a>\n`;
       });
       return aiResponse;
     }
@@ -115,7 +115,7 @@ async function generateAIResponse(query, userId) {
       const snippet = result.content.substring(0, 200) + '...';
       response += `${index + 1}. **${docName}**\n`;
       response += `Content: ${snippet}\n`;
-      response += `<a href="http://localhost:5000/api/documents/${docId}/download" target="_blank">Download Document</a>\n\n`;
+      response += `<a href="${process.env.BACKEND_URL || 'http://localhost:5000'}/api/documents/${docId}/download" target="_blank">Download Document</a>\n\n`;
     });
     return response;
   }
