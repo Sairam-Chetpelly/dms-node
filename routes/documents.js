@@ -139,11 +139,12 @@ router.get('/', auth, async (req, res) => {
       if (req.user.role === 'admin' || req.user.role === 'manager') {
         query = {}; // Can see all documents
       } else {
-        // Employee can see own documents + documents in folders shared with their department
+        // Employee can see own documents + documents in folders shared with their department or directly with them
         const accessibleFolders = await Folder.find({
           $or: [
             { owner: req.user._id },
-            { departmentAccess: req.user.department }
+            { departmentAccess: req.user.department },
+            { sharedWith: req.user._id }
           ]
         }).select('_id');
         

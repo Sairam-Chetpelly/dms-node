@@ -6,7 +6,7 @@ const folderSchema = new mongoose.Schema({
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   isShared: { type: Boolean, default: false },
   sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  departmentAccess: [{ type: String, enum: ['hr', 'finance', 'it', 'marketing', 'operations'] }],
+  departmentAccess: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Department' }],
   permissions: {
     read: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     write: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],

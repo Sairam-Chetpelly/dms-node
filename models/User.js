@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'manager', 'employee'], default: 'employee' },
-  department: { type: String, enum: ['hr', 'finance', 'it', 'marketing', 'operations'], required: true }
+  department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', required: true }
 }, {
   timestamps: true
 });

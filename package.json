@@ -5,7 +5,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "seed-users": "node seeders/createUsers.js"
+    "seed-departments": "node seeders/createDepartments.js",
+    "seed-users": "node seeders/createUsers.js",
+    "seed-all": "npm run seed-departments && npm run seed-users"
   },
   "dependencies": {
     "axios": "^1.10.0",

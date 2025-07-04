@@ -8,6 +8,7 @@ const router = express.Router();
 router.post('/', auth, async (req, res) => {
   try {
     const { name, parent, departmentAccess } = req.body;
+    console.log('Creating folder:', { name, parent, departmentAccess, owner: req.user._id });
     
     const folder = new Folder({
       name,
@@ -17,10 +18,12 @@ router.post('/', auth, async (req, res) => {
     });
 
     await folder.save();
-    await folder.populate(['parent', 'owner']);
+    await folder.populate(['parent', 'owner', 'departmentAccess']);
     
+    console.log('Folder created successfully:', folder);
     res.status(201).json(folder);
   } catch (error) {
+    console.error('Error creating folder:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -36,7 +39,8 @@ router.get('/', auth, async (req, res) => {
       query = {
         $or: [
           { owner: req.user._id },
-          { departmentAccess: req.user.department }
+          { departmentAccess: req.user.department },
+          { sharedWith: req.user._id }
         ]
       };
     }
@@ -46,7 +50,7 @@ router.get('/', auth, async (req, res) => {
     }
 
     const folders = await Folder.find(query)
-      .populate(['parent', 'owner'])
+      .populate(['parent', 'owner', 'sharedWith', 'departmentAccess'])
       .sort({ name: 1 });
     
     res.json(folders);
@@ -58,7 +62,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const folder = await Folder.findById(req.params.id)
-      .populate(['parent', 'owner']);
+      .populate(['parent', 'owner', 'sharedWith', 'departmentAccess']);
     
     if (!folder) {
       return res.status(404).json({ message: 'Folder not found' });
@@ -105,6 +109,30 @@ router.put('/:id/share-department', auth, async (req, res) => {
       { departmentAccess: departments },
       { new: true }
     ).populate(['parent', 'owner']);
+    
+    res.json(folder);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Share folder with specific users
+router.put('/:id/share-users', auth, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ message: 'Only admin and managers can share folders with users' });
+    }
+    
+    const folder = await Folder.findByIdAndUpdate(
+      req.params.id,
+      { 
+        isShared: userIds.length > 0,
+        sharedWith: userIds 
+      },
+      { new: true }
+    ).populate(['parent', 'owner', 'sharedWith']);
     
     res.json(folder);
   } catch (error) {
