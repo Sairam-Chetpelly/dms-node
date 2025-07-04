@@ -7,12 +7,13 @@ const router = express.Router();
 
 router.post('/', auth, async (req, res) => {
   try {
-    const { name, parent } = req.body;
+    const { name, parent, departmentAccess } = req.body;
     
     const folder = new Folder({
       name,
       parent: parent || null,
-      owner: req.user._id
+      owner: req.user._id,
+      departmentAccess: departmentAccess || []
     });
 
     await folder.save();
@@ -27,7 +28,18 @@ router.post('/', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   try {
     const { parent } = req.query;
-    let query = { owner: req.user._id };
+    let query;
+    
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      query = {};
+    } else {
+      query = {
+        $or: [
+          { owner: req.user._id },
+          { departmentAccess: req.user.department }
+        ]
+      };
+    }
     
     if (parent) {
       query.parent = parent === 'null' ? null : parent;
@@ -60,11 +72,37 @@ router.get('/:id', auth, async (req, res) => {
 
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, departmentAccess } = req.body;
+    
+    const updateData = { name };
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      updateData.departmentAccess = departmentAccess;
+    }
     
     const folder = await Folder.findByIdAndUpdate(
       req.params.id,
-      { name },
+      updateData,
+      { new: true }
+    ).populate(['parent', 'owner']);
+    
+    res.json(folder);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Share folder with departments
+router.put('/:id/share-department', auth, async (req, res) => {
+  try {
+    const { departments } = req.body;
+    
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ message: 'Only admin and managers can share folders with departments' });
+    }
+    
+    const folder = await Folder.findByIdAndUpdate(
+      req.params.id,
+      { departmentAccess: departments },
       { new: true }
     ).populate(['parent', 'owner']);
     
