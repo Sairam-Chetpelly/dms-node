@@ -1,7 +1,8 @@
 const express = require('express');
+const User = require('../models/User');
+const Document = require('../models/Document');
 const auth = require('../middleware/auth');
 const axios = require('axios');
-const Document = require('../models/Document');
 const DocumentContent = require('../models/DocumentContent');
 const pdf = require('pdf-parse');
 const fs = require('fs');
@@ -21,6 +22,99 @@ Documents Management System - A document management system with features:
 - Built with React.js, Node.js, MongoDB
 - API endpoints for documents, folders, tags, authentication
 `;
+
+// Enhanced keyword extraction
+const extractKeywords = (query) => {
+  const stopWords = ['who', 'is', 'what', 'where', 'when', 'how', 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'about', 'tell', 'me', 'can', 'you', 'please', 'find', 'show', 'get'];
+  
+  // Extract potential names (capitalized words)
+  const namePattern = /\b[A-Z][a-z]+\b/g;
+  const names = query.match(namePattern) || [];
+  
+  // Extract regular keywords
+  const words = query.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.length > 2 && !stopWords.includes(word));
+  
+  // Combine names and keywords, prioritize names
+  const allKeywords = [...names, ...words]
+    .filter((word, index, arr) => arr.indexOf(word.toLowerCase()) === index)
+    .slice(0, 8);
+  
+  return allKeywords;
+};
+
+// Search database for relevant information including document content
+const searchDatabase = async (keywords) => {
+  const results = { users: [], documents: [], documentContent: [] };
+  
+  if (keywords.length === 0) return results;
+  
+  try {
+    // Enhanced user search
+    const userSearchConditions = [];
+    
+    keywords.forEach(keyword => {
+      userSearchConditions.push(
+        { name: { $regex: keyword, $options: 'i' } },
+        { email: { $regex: keyword, $options: 'i' } },
+        { role: { $regex: keyword, $options: 'i' } }
+      );
+    });
+    
+    if (userSearchConditions.length > 0) {
+      results.users = await User.find({ $or: userSearchConditions })
+        .populate('department', 'displayName description')
+        .select('name email role department createdAt')
+        .sort({ createdAt: -1 })
+        .limit(10);
+    }
+
+    // Enhanced document search (metadata)
+    const docSearchConditions = [];
+    
+    keywords.forEach(keyword => {
+      docSearchConditions.push(
+        { originalName: { $regex: keyword, $options: 'i' } },
+        { tags: { $in: [new RegExp(keyword, 'i')] } },
+        { mimeType: { $regex: keyword, $options: 'i' } }
+      );
+    });
+    
+    if (docSearchConditions.length > 0) {
+      results.documents = await Document.find({ $or: docSearchConditions })
+        .populate('uploadedBy', 'name')
+        .populate('folder', 'name')
+        .select('originalName mimeType tags createdAt uploadedBy folder size')
+        .sort({ createdAt: -1 })
+        .limit(10);
+    }
+
+    // Search document content
+    const contentSearchConditions = [];
+    
+    keywords.forEach(keyword => {
+      contentSearchConditions.push(
+        { content: { $regex: keyword, $options: 'i' } }
+      );
+    });
+    
+    if (contentSearchConditions.length > 0) {
+      results.documentContent = await Document.find({ $or: contentSearchConditions })
+        .populate('uploadedBy', 'name')
+        .populate('folder', 'name')
+        .select('originalName mimeType content createdAt uploadedBy folder')
+        .sort({ createdAt: -1 })
+        .limit(5);
+    }
+
+  } catch (error) {
+    console.error('Database search error:', error);
+  }
+  
+  return results;
+};
 
 // Search documents by content from Document collection
 async function searchDocumentContent(query, userId) {
@@ -61,8 +155,92 @@ async function callOpenRouter(messages, maxTokens = 300) {
 
 
 
-// AI response function with document search
+// Helper function to get skills based on role
+const getSkillsFromRole = (role) => {
+  const roleSkills = {
+    'admin': 'They handle system administration and user management.',
+    'manager': 'They oversee team operations and project management.',
+    'employee': 'They contribute to various projects and tasks.',
+    'developer': 'They work on software development and programming.',
+    'designer': 'They handle UI/UX design and creative work.'
+  };
+  
+  return roleSkills[role.toLowerCase()] || 'They work in the organization.';
+};
+
+// AI response function with enhanced database search
 async function generateAIResponse(query, userId) {
+  // First extract keywords and search database
+  const keywords = extractKeywords(query);
+  const dbResults = await searchDatabase(keywords);
+  
+  // If we found users, documents, or content in database, create AI response
+  if (dbResults.users.length > 0 || dbResults.documents.length > 0 || dbResults.documentContent.length > 0) {
+    let contextData = '';
+    
+    if (dbResults.users.length > 0) {
+      contextData += 'Users found:\n';
+      dbResults.users.forEach(user => {
+        contextData += `- ${user.name}: ${user.role} in ${user.department?.displayName || 'Unknown'} department (${user.email})\n`;
+      });
+    }
+    
+    if (dbResults.documents.length > 0) {
+      contextData += 'Documents found:\n';
+      dbResults.documents.forEach(doc => {
+        contextData += `- ${doc.originalName} (${doc.mimeType}) - Created: ${new Date(doc.createdAt).toLocaleDateString()}\n`;
+      });
+    }
+    
+    if (dbResults.documentContent.length > 0) {
+      contextData += 'Document Content found:\n';
+      dbResults.documentContent.forEach(doc => {
+        const snippet = doc.content ? doc.content.substring(0, 200) + '...' : 'No content preview';
+        contextData += `- ${doc.originalName}: ${snippet}\n`;
+      });
+    }
+    
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a helpful AI assistant in a document management system. Answer naturally and conversationally based on the database information provided. If asking about a person, mention their role, department, and relevant details. Be friendly and informative.`
+      },
+      {
+        role: 'user',
+        content: `Question: ${query}\n\nDatabase Information:\n${contextData}`
+      }
+    ];
+
+    // Try AI API first
+    try {
+      if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
+        const aiResponse = await callOpenRouter(messages, 300);
+        return aiResponse;
+      }
+    } catch (error) {
+      console.error('AI API error:', error);
+    }
+    
+    // Fallback response with database data
+    if (dbResults.users.length > 0) {
+      const user = dbResults.users[0];
+      const skills = getSkillsFromRole(user.role);
+      return `${user.name} is a ${user.role} in the ${user.department?.displayName || 'system'} department. ${skills} You can reach them at ${user.email}.`;
+    }
+    
+    if (dbResults.documentContent.length > 0) {
+      const contentDoc = dbResults.documentContent[0];
+      const snippet = contentDoc.content ? contentDoc.content.substring(0, 300) : 'No content available';
+      return `I found relevant information in the document "${contentDoc.originalName}". Here's what I found: ${snippet}... Would you like me to search for more specific information?`;
+    }
+    
+    if (dbResults.documents.length > 0) {
+      const docCount = dbResults.documents.length;
+      const docTypes = [...new Set(dbResults.documents.map(d => d.mimeType.split('/')[1]))].join(', ');
+      const recentDocs = dbResults.documents.slice(0, 3).map(d => d.originalName).join(', ');
+      return `I found ${docCount} document(s) related to your query. These include ${docTypes} files. Recent documents: ${recentDocs}. Would you like me to help you find something specific?`;
+    }
+  }
   const lowerQuery = query.toLowerCase();
   
   // Search in document content first
@@ -188,6 +366,41 @@ async function generateAIResponse(query, userId) {
   
   return "Our document management system helps you upload, organize, and manage files with features like folders, tags, search, and secure authentication. What specific feature would you like to know about?";
 }
+
+// Add new route for database-aware queries
+router.post('/query', auth, async (req, res) => {
+  try {
+    const { message } = req.body;
+    
+    if (!message || message.trim().length === 0) {
+      return res.status(400).json({ message: 'Query message is required' });
+    }
+
+    // Extract keywords from user query
+    const keywords = extractKeywords(message);
+    
+    // Search database for relevant information
+    const retrievedData = await searchDatabase(keywords);
+    
+    // Generate AI response with database context
+    const aiResponse = await generateAIResponse(message, req.user._id);
+    
+    res.json({
+      query: message,
+      keywords,
+      response: aiResponse,
+      dataFound: {
+        users: retrievedData.users.length,
+        documents: retrievedData.documents.length,
+        documentContent: retrievedData.documentContent.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Chatbot query error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 router.post('/chat', auth, async (req, res) => {
   try {

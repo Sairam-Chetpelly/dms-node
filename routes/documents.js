@@ -120,6 +120,22 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
   }
 });
 
+// Helper function to check folder access
+const hasFolderAccess = async (folderId, user) => {
+  if (!folderId) return true; // Root level documents
+  if (user.role === 'admin' || user.role === 'manager') return true;
+  
+  const Folder = require('../models/Folder');
+  const folder = await Folder.findById(folderId);
+  if (!folder) return false;
+  
+  if (folder.owner.toString() === user._id.toString()) return true;
+  if (folder.sharedWith && folder.sharedWith.some(u => u.toString() === user._id.toString())) return true;
+  if (folder.departmentAccess && folder.departmentAccess.some(d => d.toString() === user.department.toString())) return true;
+  
+  return false;
+};
+
 router.get('/', auth, async (req, res) => {
   try {
     const { folder, starred, shared, search, invoices } = req.query;
@@ -127,7 +143,10 @@ router.get('/', auth, async (req, res) => {
     let query = {};
 
     if (shared === 'true') {
-      query = { sharedWith: req.user._id };
+      query = { 
+        sharedWith: req.user._id,
+        folder: null // Only show shared files from root level (My Drives)
+      };
     } else if (req.query.mydrives === 'true') {
       query = { owner: req.user._id, folder: null, isShared: false };
     } else if (invoices === 'true') {
@@ -135,11 +154,11 @@ router.get('/', auth, async (req, res) => {
       const invoiceRecords = await InvoiceRecord.find({ owner: req.user._id }).populate('document');
       return res.json(invoiceRecords.map(record => record.document));
     } else {
-      // Role-based document access
+      // Role-based document access with folder permission check
       if (req.user.role === 'admin' || req.user.role === 'manager') {
         query = {}; // Can see all documents
       } else {
-        // Employee can see own documents + documents in folders shared with their department or directly with them
+        // Employee can see own documents + documents in folders they have access to
         const accessibleFolders = await Folder.find({
           $or: [
             { owner: req.user._id },
@@ -153,13 +172,29 @@ router.get('/', auth, async (req, res) => {
         query = {
           $or: [
             { owner: req.user._id },
-            { folder: { $in: folderIds } }
+            { folder: { $in: folderIds } },
+            { sharedWith: req.user._id, folder: { $ne: null } } // Include shared files in folders
           ]
         };
+        
+        // If requesting specific folder, check if user has access
+        if (folder && folder !== 'null') {
+          const hasAccess = await hasFolderAccess(folder, req.user);
+          if (!hasAccess) {
+            // User can see folder but not its documents
+            return res.json([]);
+          }
+        }
       }
     }
 
-    if (folder) query.folder = folder === 'null' ? null : folder;
+    // Handle folder-specific requests
+    if (folder && folder !== 'null') {
+      query.folder = folder;
+    } else if (folder === 'null') {
+      query.folder = null;
+    }
+    
     if (starred === 'true') query.isStarred = true;
     if (search) query.originalName = { $regex: search, $options: 'i' };
 
