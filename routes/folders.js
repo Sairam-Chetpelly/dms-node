@@ -53,6 +53,7 @@ const getParentFolderIds = async (folderId) => {
 router.get('/', auth, async (req, res) => {
   try {
     const { parent } = req.query;
+    const Document = require('../models/Document');
     
     if (req.user.role === 'admin' || req.user.role === 'manager') {
       // Admin/Manager sees all folders
@@ -83,6 +84,14 @@ router.get('/', auth, async (req, res) => {
     
     const directAccessIds = new Set(directAccessFolders.map(f => f._id.toString()));
     
+    // Get folders that contain shared files (individual file sharing)
+    const sharedDocuments = await Document.find({ sharedWith: req.user._id }).select('folder');
+    const foldersWithSharedFiles = new Set(
+      sharedDocuments
+        .filter(doc => doc.folder)
+        .map(doc => doc.folder.toString())
+    );
+    
     // Get all parent folder IDs that should be visible
     const parentFolderIds = new Set();
     for (const folder of directAccessFolders) {
@@ -90,22 +99,29 @@ router.get('/', auth, async (req, res) => {
       parents.forEach(id => parentFolderIds.add(id.toString()));
     }
     
-    // Get parent folders that should be visible but not accessible
-    const parentFolders = await Folder.find({
-      _id: { $in: Array.from(parentFolderIds) }
+    // Add parent folders for folders with shared files
+    for (const folderId of foldersWithSharedFiles) {
+      const parents = await getParentFolderIds(folderId);
+      parents.forEach(id => parentFolderIds.add(id.toString()));
+      parentFolderIds.add(folderId); // Include the folder itself
+    }
+    
+    // Get all folders that should be visible (direct access + parent folders + folders with shared files)
+    const allVisibleFolderIds = new Set([
+      ...directAccessIds,
+      ...parentFolderIds,
+      ...foldersWithSharedFiles
+    ]);
+    
+    const allVisibleFolders = await Folder.find({
+      _id: { $in: Array.from(allVisibleFolderIds) }
     }).populate(['parent', 'owner', 'sharedWith', 'departmentAccess']);
     
-    // Combine accessible and parent folders
-    const allFolders = [...directAccessFolders, ...parentFolders];
-    const uniqueFolders = allFolders.filter((folder, index, self) => 
-      index === self.findIndex(f => f._id.toString() === folder._id.toString())
-    );
-    
     // Filter by parent if specified
-    let filteredFolders = uniqueFolders;
+    let filteredFolders = allVisibleFolders;
     if (parent) {
       const parentId = parent === 'null' ? null : parent;
-      filteredFolders = uniqueFolders.filter(folder => {
+      filteredFolders = allVisibleFolders.filter(folder => {
         if (parentId === null) {
           return folder.parent === null;
         }
@@ -117,10 +133,13 @@ router.get('/', auth, async (req, res) => {
     const foldersWithAccess = filteredFolders.map(folder => {
       const folderId = folder._id.toString();
       const hasDirectAccess = directAccessIds.has(folderId);
+      const hasSharedFiles = foldersWithSharedFiles.has(folderId);
+      
       return {
         ...folder.toObject(),
         hasAccess: true, // All folders in this list should be visible
-        canViewContent: hasDirectAccess
+        canViewContent: hasDirectAccess, // Can view all content only if has direct folder access
+        hasSharedFiles: hasSharedFiles // Indicates folder is visible due to shared files
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
     
@@ -247,16 +266,23 @@ router.put('/:id/share-department', auth, async (req, res) => {
   }
 });
 
-// Share folder with specific users
+// Share folder with specific users (gives access to all folder contents)
 router.put('/:id/share-users', auth, async (req, res) => {
   try {
     const { userIds } = req.body;
     
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-      return res.status(403).json({ message: 'Only admin and managers can share folders with users' });
+    // Check if user owns the folder or has admin/manager role
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) {
+      return res.status(404).json({ message: 'Folder not found' });
     }
     
-    const folder = await Folder.findByIdAndUpdate(
+    if (folder.owner.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    const updatedFolder = await Folder.findByIdAndUpdate(
       req.params.id,
       { 
         isShared: userIds.length > 0,
@@ -265,7 +291,38 @@ router.put('/:id/share-users', auth, async (req, res) => {
       { new: true }
     ).populate(['parent', 'owner', 'sharedWith']);
     
-    res.json(folder);
+    res.json(updatedFolder);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Share entire folder (alternative endpoint)
+router.put('/:id/share', auth, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    
+    // Check if user owns the folder or has admin/manager role
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) {
+      return res.status(404).json({ message: 'Folder not found' });
+    }
+    
+    if (folder.owner.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    const updatedFolder = await Folder.findByIdAndUpdate(
+      req.params.id,
+      { 
+        isShared: userIds.length > 0,
+        sharedWith: userIds 
+      },
+      { new: true }
+    ).populate(['parent', 'owner', 'sharedWith']);
+    
+    res.json(updatedFolder);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

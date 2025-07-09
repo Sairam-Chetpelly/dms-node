@@ -144,8 +144,7 @@ router.get('/', auth, async (req, res) => {
 
     if (shared === 'true') {
       query = { 
-        sharedWith: req.user._id,
-        folder: null // Only show shared files from root level (My Drives)
+        sharedWith: req.user._id
       };
     } else if (req.query.mydrives === 'true') {
       query = { owner: req.user._id, folder: null, isShared: false };
@@ -158,7 +157,7 @@ router.get('/', auth, async (req, res) => {
       if (req.user.role === 'admin' || req.user.role === 'manager') {
         query = {}; // Can see all documents
       } else {
-        // Employee can see own documents + documents in folders they have access to
+        // Employee can see own documents + documents in folders they have access to + individually shared files
         const accessibleFolders = await Folder.find({
           $or: [
             { owner: req.user._id },
@@ -173,23 +172,29 @@ router.get('/', auth, async (req, res) => {
           $or: [
             { owner: req.user._id },
             { folder: { $in: folderIds } },
-            { sharedWith: req.user._id, folder: { $ne: null } } // Include shared files in folders
+            { sharedWith: req.user._id } // Include all shared files (folder or individual)
           ]
         };
         
-        // If requesting specific folder, check if user has access
+        // If requesting specific folder, check access type
         if (folder && folder !== 'null') {
-          const hasAccess = await hasFolderAccess(folder, req.user);
-          if (!hasAccess) {
-            // User can see folder but not its documents
-            return res.json([]);
+          const hasFullFolderAccess = await hasFolderAccess(folder, req.user);
+          if (hasFullFolderAccess) {
+            // User has full folder access - show all documents in folder
+            query.folder = folder;
+          } else {
+            // User might have individual file access - show only shared files in this folder
+            query = {
+              folder: folder,
+              sharedWith: req.user._id
+            };
           }
         }
       }
     }
 
-    // Handle folder-specific requests
-    if (folder && folder !== 'null') {
+    // Handle folder-specific requests for admin/manager
+    if ((req.user.role === 'admin' || req.user.role === 'manager') && folder && folder !== 'null') {
       query.folder = folder;
     } else if (folder === 'null') {
       query.folder = null;
@@ -237,24 +242,37 @@ router.put('/:id/star', auth, async (req, res) => {
   }
 });
 
+// Share individual file with users
 router.put('/:id/share', auth, async (req, res) => {
   try {
     const { userIds, permissions } = req.body;
-    const document = await Document.findByIdAndUpdate(
+    
+    // Check if user owns the document or has admin/manager role
+    const document = await Document.findById(req.params.id);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    
+    if (document.owner.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    const updatedDocument = await Document.findByIdAndUpdate(
       req.params.id,
       {
-        isShared: userIds.length > 0,
-        sharedWith: userIds,
+        isShared: userIds && userIds.length > 0,
+        sharedWith: userIds || [],
         permissions: {
-          read: permissions.read || [],
-          write: permissions.write || [],
-          delete: permissions.delete || []
+          read: permissions?.read || userIds || [],
+          write: permissions?.write || [],
+          delete: permissions?.delete || []
         }
       },
       { new: true }
     ).populate(['folder', 'tags', 'owner', 'sharedWith']);
     
-    res.json(document);
+    res.json(updatedDocument);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -285,6 +303,8 @@ router.get('/:id/download', auth, async (req, res) => {
       return res.status(404).json({ message: 'Document not found' });
     }
 
+    res.setHeader('Content-Type', document.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${document.originalName}"`);
     res.download(document.path, document.originalName);
   } catch (error) {
     res.status(500).json({ message: error.message });
