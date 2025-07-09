@@ -30,7 +30,41 @@ router.post('/', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   try {
     const { startDate, endDate, vendorName, minValue, maxValue } = req.query;
-    let query = { owner: req.user._id };
+    const Document = require('../models/Document');
+    const Folder = require('../models/Folder');
+    
+    // Get accessible documents based on user permissions
+    let accessibleDocuments = [];
+    
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      // Admin/Manager can see all documents
+      accessibleDocuments = await Document.find({}).select('_id');
+    } else {
+      // Get folders user has access to
+      const accessibleFolders = await Folder.find({
+        $or: [
+          { owner: req.user._id },
+          { departmentAccess: req.user.department },
+          { sharedWith: req.user._id }
+        ]
+      }).select('_id');
+      
+      const folderIds = accessibleFolders.map(f => f._id);
+      
+      // Get documents user can access
+      accessibleDocuments = await Document.find({
+        $or: [
+          { owner: req.user._id },
+          { folder: { $in: folderIds } },
+          { sharedWith: req.user._id }
+        ]
+      }).select('_id');
+    }
+    
+    const documentIds = accessibleDocuments.map(d => d._id);
+    
+    // Build invoice query
+    let query = { document: { $in: documentIds } };
 
     if (startDate || endDate) {
       query.invoiceDate = {};
@@ -61,7 +95,36 @@ router.get('/', auth, async (req, res) => {
 router.get('/export', auth, async (req, res) => {
   try {
     const { startDate, endDate, vendorName, minValue, maxValue } = req.query;
-    let query = { owner: req.user._id };
+    const Document = require('../models/Document');
+    const Folder = require('../models/Folder');
+    
+    // Get accessible documents based on user permissions
+    let accessibleDocuments = [];
+    
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      accessibleDocuments = await Document.find({}).select('_id');
+    } else {
+      const accessibleFolders = await Folder.find({
+        $or: [
+          { owner: req.user._id },
+          { departmentAccess: req.user.department },
+          { sharedWith: req.user._id }
+        ]
+      }).select('_id');
+      
+      const folderIds = accessibleFolders.map(f => f._id);
+      
+      accessibleDocuments = await Document.find({
+        $or: [
+          { owner: req.user._id },
+          { folder: { $in: folderIds } },
+          { sharedWith: req.user._id }
+        ]
+      }).select('_id');
+    }
+    
+    const documentIds = accessibleDocuments.map(d => d._id);
+    let query = { document: { $in: documentIds } };
 
     if (startDate || endDate) {
       query.invoiceDate = {};
@@ -100,7 +163,7 @@ router.get('/export', auth, async (req, res) => {
         invoiceDate: invoice.invoiceDate.toDateString(),
         invoiceValue: invoice.invoiceValue,
         invoiceQty: invoice.invoiceQty,
-        documentName: invoice.document.originalName
+        documentName: invoice.document?.originalName || 'Document not found'
       });
     });
 
