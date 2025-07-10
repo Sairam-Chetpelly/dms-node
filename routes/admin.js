@@ -16,8 +16,25 @@ const adminOnly = (req, res, next) => {
 // Employee CRUD
 router.get('/employees', auth, adminOnly, async (req, res) => {
   try {
-    const employees = await User.find({}).populate('department').select('-password').sort({ createdAt: -1 });
-    res.json(employees);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const employees = await User.find({})
+      .populate('department')
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await User.countDocuments({});
+    
+    res.json({
+      employees,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -79,14 +96,30 @@ router.delete('/employees/:id', auth, adminOnly, async (req, res) => {
 // Department CRUD
 router.get('/departments', async (req, res) => {
   try {
-    const departments = await Department.find({ isActive: true }).sort({ displayName: 1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const departments = await Department.find({ isActive: true })
+      .sort({ displayName: 1 })
+      .skip(skip)
+      .limit(limit);
+    
     const departmentStats = await Promise.all(
       departments.map(async (dept) => {
         const count = await User.countDocuments({ department: dept._id });
         return { ...dept.toObject(), employeeCount: count };
       })
     );
-    res.json(departmentStats);
+    
+    const total = await Department.countDocuments({ isActive: true });
+    
+    res.json({
+      departments: departmentStats,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

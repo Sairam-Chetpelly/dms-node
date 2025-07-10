@@ -29,9 +29,13 @@ router.post('/', auth, async (req, res) => {
 
 router.get('/', auth, async (req, res) => {
   try {
-    const { startDate, endDate, vendorName, minValue, maxValue } = req.query;
+    const { startDate, endDate, vendorName, minValue, maxValue, page, limit } = req.query;
     const Document = require('../models/Document');
     const Folder = require('../models/Folder');
+    
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
     
     // Get accessible documents based on user permissions
     let accessibleDocuments = [];
@@ -84,9 +88,18 @@ router.get('/', auth, async (req, res) => {
 
     const invoices = await InvoiceRecord.find(query)
       .populate(['document', 'owner'])
-      .sort({ invoiceDate: -1 });
+      .sort({ invoiceDate: -1 })
+      .skip(skip)
+      .limit(limitNum);
     
-    res.json(invoices);
+    const total = await InvoiceRecord.countDocuments(query);
+    
+    res.json({
+      invoices,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
