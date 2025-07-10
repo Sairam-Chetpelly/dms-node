@@ -120,6 +120,18 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
   }
 });
 
+// Helper function to get folder IDs shared with user
+const getFolderIdsSharedWithUser = async (userId) => {
+  const Folder = require('../models/Folder');
+  const sharedFolders = await Folder.find({
+    $or: [
+      { sharedWith: userId },
+      { departmentAccess: { $exists: true, $ne: [] } }
+    ]
+  }).select('_id');
+  return sharedFolders.map(f => f._id);
+};
+
 // Helper function to check folder access
 const hasFolderAccess = async (folderId, user) => {
   if (!folderId) return true; // Root level documents
@@ -143,11 +155,13 @@ router.get('/', auth, async (req, res) => {
     let query = {};
 
     if (shared === 'true') {
+      // Only show individually shared files from My Drives (folder: null)
       query = { 
-        sharedWith: req.user._id
+        sharedWith: req.user._id,
+        folder: null
       };
     } else if (req.query.mydrives === 'true') {
-      query = { owner: req.user._id, folder: null, isShared: false };
+      query = { owner: req.user._id, folder: null };
     } else if (invoices === 'true') {
       const InvoiceRecord = require('../models/InvoiceRecord');
       const invoiceRecords = await InvoiceRecord.find({ owner: req.user._id }).populate('document');
@@ -347,12 +361,42 @@ router.post('/chat', auth, async (req, res) => {
       return res.status(400).json({ message: 'Query is required' });
     }
 
-    // Search for PDFs containing the query text
-    const documents = await Document.find({
-      owner: req.user._id,
-      mimeType: 'application/pdf',
-      content: { $regex: query, $options: 'i' }
-    }).populate(['folder', 'tags', 'owner']).sort({ createdAt: -1 });
+    const Folder = require('../models/Folder');
+    let searchQuery = {};
+
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      // Admin/Manager can search all documents
+      searchQuery = {
+        mimeType: 'application/pdf',
+        content: { $regex: query, $options: 'i' }
+      };
+    } else {
+      // Get folders user has access to
+      const accessibleFolders = await Folder.find({
+        $or: [
+          { owner: req.user._id },
+          { departmentAccess: req.user.department },
+          { sharedWith: req.user._id }
+        ]
+      }).select('_id');
+      
+      const folderIds = accessibleFolders.map(f => f._id);
+      
+      // Search in accessible documents
+      searchQuery = {
+        mimeType: 'application/pdf',
+        content: { $regex: query, $options: 'i' },
+        $or: [
+          { owner: req.user._id },
+          { folder: { $in: folderIds } },
+          { sharedWith: req.user._id }
+        ]
+      };
+    }
+
+    const documents = await Document.find(searchQuery)
+      .populate(['folder', 'tags', 'owner'])
+      .sort({ createdAt: -1 });
 
     // Extract relevant snippets
     const results = documents.map(doc => {
