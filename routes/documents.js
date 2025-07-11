@@ -450,7 +450,7 @@ router.post('/:id/split', auth, async (req, res) => {
     
     const filePath = path.join(__dirname, '../uploads', document.name);
     const pdfBytes = fs.readFileSync(filePath);
-    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
     const totalPages = pdfDoc.getPageCount();
     
     const rangeLines = ranges.split('\n').filter(line => line.trim());
@@ -525,7 +525,7 @@ router.post('/merge', auth, async (req, res) => {
     for (const doc of documents) {
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      const pdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+      const pdf = await PDFDocument.load(pdfBytes);
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach(page => mergedPdf.addPage(page));
     }
@@ -575,7 +575,7 @@ router.post('/merge-pages', auth, async (req, res) => {
       
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      const pdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+      const pdf = await PDFDocument.load(pdfBytes);
       
       const pageIndex = pageInfo.pageNum - 1;
       if (pageIndex >= 0 && pageIndex < pdf.getPageCount()) {
