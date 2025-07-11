@@ -77,16 +77,14 @@ const searchDatabase = async (keywords) => {
     keywords.forEach(keyword => {
       docSearchConditions.push(
         { originalName: { $regex: keyword, $options: 'i' } },
-        { tags: { $in: [new RegExp(keyword, 'i')] } },
         { mimeType: { $regex: keyword, $options: 'i' } }
       );
     });
     
     if (docSearchConditions.length > 0) {
       results.documents = await Document.find({ $or: docSearchConditions })
-        .populate('uploadedBy', 'name')
         .populate('folder', 'name')
-        .select('originalName mimeType tags createdAt uploadedBy folder size')
+        .select('originalName mimeType tags createdAt folder size')
         .sort({ createdAt: -1 })
         .limit(10);
     }
@@ -102,9 +100,8 @@ const searchDatabase = async (keywords) => {
     
     if (contentSearchConditions.length > 0) {
       results.documentContent = await Document.find({ $or: contentSearchConditions })
-        .populate('uploadedBy', 'name')
         .populate('folder', 'name')
-        .select('originalName mimeType content createdAt uploadedBy folder')
+        .select('originalName mimeType content createdAt folder')
         .sort({ createdAt: -1 })
         .limit(5);
     }
@@ -135,10 +132,55 @@ async function searchDocumentContent(query, userId) {
   }
 }
 
+// Available AI models
+const AI_MODELS = {
+  'gemini-pro': {
+    name: 'Gemini Pro',
+    provider: 'vertex',
+    model: 'gemini-1.5-pro'
+  },
+  'gemini-flash': {
+    name: 'Gemini Flash',
+    provider: 'vertex',
+    model: 'gemini-1.5-flash'
+  },
+  'openrouter-gemma': {
+    name: 'Gemma 2 9B',
+    provider: 'openrouter',
+    model: 'google/gemma-2-9b-it:free'
+  }
+};
+
+// Call Google Vertex AI with API key
+async function callVertexAI(messages, model = 'gemini-1.5-flash', maxTokens = 300) {
+  const response = await axios.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent', {
+    contents: messages.filter(m => m.role !== 'system').map(msg => ({
+      parts: [{ text: msg.content }],
+      role: msg.role === 'user' ? 'user' : 'model'
+    })),
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature: 0.7
+    },
+    systemInstruction: messages.find(m => m.role === 'system') ? {
+      parts: [{ text: messages.find(m => m.role === 'system').content }]
+    } : undefined
+  }, {
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    params: {
+      key: process.env.GOOGLE_API_KEY
+    }
+  });
+  
+  return response.data.candidates[0].content.parts[0].text;
+}
+
 // Call OpenRouter API
-async function callOpenRouter(messages, maxTokens = 300) {
+async function callOpenRouter(messages, model = 'google/gemma-2-9b-it:free', maxTokens = 300) {
   const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-    model: 'google/gemma-2-9b-it:free',
+    model,
     messages,
     max_tokens: maxTokens,
     temperature: 0.7
@@ -169,7 +211,7 @@ const getSkillsFromRole = (role) => {
 };
 
 // AI response function with enhanced database search
-async function generateAIResponse(query, userId) {
+async function generateAIResponse(query, userId, selectedModel = 'gemini-flash') {
   // First extract keywords and search database
   const keywords = extractKeywords(query);
   const dbResults = await searchDatabase(keywords);
@@ -213,9 +255,15 @@ async function generateAIResponse(query, userId) {
 
     // Try AI API first
     try {
-      if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
-        const aiResponse = await callOpenRouter(messages, 300);
-        return aiResponse;
+      const modelConfig = AI_MODELS[selectedModel];
+      if (modelConfig) {
+        let aiResponse;
+        if (modelConfig.provider === 'vertex' && process.env.GOOGLE_API_KEY) {
+          aiResponse = await callVertexAI(messages, modelConfig.model, 300);
+        } else if (modelConfig.provider === 'openrouter' && process.env.OPENROUTER_API_KEY) {
+          aiResponse = await callOpenRouter(messages, modelConfig.model, 300);
+        }
+        if (aiResponse) return aiResponse;
       }
     } catch (error) {
       console.error('AI API error:', error);
@@ -264,14 +312,19 @@ async function generateAIResponse(query, userId) {
       }
     ];
 
-    // Use OpenRouter API
+    // Use AI API
     let aiResponse;
     try {
-      if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
-        aiResponse = await callOpenRouter(messages, 300);
+      const modelConfig = AI_MODELS[selectedModel];
+      if (modelConfig) {
+        if (modelConfig.provider === 'vertex' && process.env.GOOGLE_API_KEY) {
+          aiResponse = await callVertexAI(messages, modelConfig.model, 300);
+        } else if (modelConfig.provider === 'openrouter' && process.env.OPENROUTER_API_KEY) {
+          aiResponse = await callOpenRouter(messages, modelConfig.model, 300);
+        }
       }
     } catch (error) {
-      console.error('OpenRouter API error:', error.response?.data || error.message);
+      console.error('AI API error:', error.response?.data || error.message);
     }
 
     if (aiResponse) {
@@ -318,14 +371,18 @@ async function generateAIResponse(query, userId) {
     }
   ];
 
-  // Use OpenRouter API
+  // Try AI APIs for general queries
   try {
-    if (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== 'your_openrouter_api_key_here') {
-      console.log('Using OpenRouter API');
-      return await callOpenRouter(messages, 150);
+    const modelConfig = AI_MODELS[selectedModel];
+    if (modelConfig) {
+      if (modelConfig.provider === 'vertex' && process.env.GOOGLE_API_KEY) {
+        return await callVertexAI(messages, modelConfig.model, 150);
+      } else if (modelConfig.provider === 'openrouter' && process.env.OPENROUTER_API_KEY) {
+        return await callOpenRouter(messages, modelConfig.model, 150);
+      }
     }
   } catch (error) {
-    console.error('OpenRouter API error:', error.response?.data || error.message);
+    console.error('AI API error:', error.response?.data || error.message);
   }
 
   // Fallback responses
@@ -402,22 +459,33 @@ router.post('/query', auth, async (req, res) => {
   }
 });
 
+// Get available AI models
+router.get('/models', (req, res) => {
+  const models = Object.entries(AI_MODELS).map(([key, config]) => ({
+    id: key,
+    name: config.name,
+    provider: config.provider
+  }));
+  res.json({ models });
+});
+
 router.post('/chat', auth, async (req, res) => {
   try {
     console.log('Chatbot request received:', req.body);
-    const { message } = req.body;
+    const { message, model = 'gemini-flash' } = req.body;
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
     
-    console.log('Processing message:', message);
-    const response = await generateAIResponse(message, req.user._id);
+    console.log('Processing message:', message, 'with model:', model);
+    const response = await generateAIResponse(message, req.user._id, model);
     console.log('AI response:', response);
     
     res.json({
       query: message,
       response,
+      model,
       timestamp: new Date()
     });
   } catch (error) {
