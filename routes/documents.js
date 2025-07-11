@@ -450,17 +450,7 @@ router.post('/:id/split', auth, async (req, res) => {
     
     const filePath = path.join(__dirname, '../uploads', document.name);
     const pdfBytes = fs.readFileSync(filePath);
-    
-    let pdfDoc;
-    try {
-      pdfDoc = await PDFDocument.load(pdfBytes);
-    } catch (error) {
-      console.error('PDF load error:', error.message);
-      if (error.message.includes('encrypted')) {
-        return res.status(400).json({ message: 'Cannot split encrypted/password-protected PDFs' });
-      }
-      return res.status(500).json({ message: `PDF loading failed: ${error.message}` });
-    }
+    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     const totalPages = pdfDoc.getPageCount();
     
     const rangeLines = ranges.split('\n').filter(line => line.trim());
@@ -511,7 +501,7 @@ router.post('/:id/split', auth, async (req, res) => {
     res.json({ message: 'PDF split successfully', documents: splitDocs });
   } catch (error) {
     console.error('Error splitting PDF:', error);
-    res.status(500).json({ message: `Error splitting PDF: ${error.message}` });
+    res.status(500).json({ message: 'Error splitting PDF' });
   }
 });
 
@@ -535,18 +525,7 @@ router.post('/merge', auth, async (req, res) => {
     for (const doc of documents) {
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      
-      let pdf;
-      try {
-        pdf = await PDFDocument.load(pdfBytes);
-      } catch (error) {
-        console.error(`PDF load error for ${doc.originalName}:`, error.message);
-        if (error.message.includes('encrypted')) {
-          return res.status(400).json({ message: `Cannot merge encrypted PDF: ${doc.originalName}` });
-        }
-        return res.status(500).json({ message: `PDF loading failed for ${doc.originalName}: ${error.message}` });
-      }
-      
+      const pdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach(page => mergedPdf.addPage(page));
     }
@@ -572,7 +551,7 @@ router.post('/merge', auth, async (req, res) => {
     res.json({ message: 'PDFs merged successfully', document: mergedDocument });
   } catch (error) {
     console.error('Error merging PDFs:', error);
-    res.status(500).json({ message: `Error merging PDFs: ${error.message}` });
+    res.status(500).json({ message: 'Error merging PDFs' });
   }
 });
 
@@ -596,17 +575,7 @@ router.post('/merge-pages', auth, async (req, res) => {
       
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      
-      let pdf;
-      try {
-        pdf = await PDFDocument.load(pdfBytes);
-      } catch (error) {
-        console.error(`PDF load error for ${doc.originalName}:`, error.message);
-        if (error.message.includes('encrypted')) {
-          continue; // Skip encrypted PDFs
-        }
-        return res.status(500).json({ message: `PDF loading failed for ${doc.originalName}: ${error.message}` });
-      }
+      const pdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
       
       const pageIndex = pageInfo.pageNum - 1;
       if (pageIndex >= 0 && pageIndex < pdf.getPageCount()) {
@@ -636,7 +605,7 @@ router.post('/merge-pages', auth, async (req, res) => {
     res.json({ message: 'Pages merged successfully', document: mergedDocument });
   } catch (error) {
     console.error('Error merging pages:', error);
-    res.status(500).json({ message: `Error merging pages: ${error.message}` });
+    res.status(500).json({ message: 'Error merging pages' });
   }
 });
 
