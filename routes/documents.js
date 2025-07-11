@@ -5,6 +5,7 @@ const fs = require('fs');
 const pdf = require('pdf-parse');
 const Tesseract = require('tesseract.js');
 const pdf2pic = require('pdf2pic');
+const { PDFDocument } = require('pdf-lib');
 const Document = require('../models/Document');
 const DocumentContent = require('../models/DocumentContent');
 const auth = require('../middleware/auth');
@@ -434,6 +435,177 @@ router.post('/chat', auth, async (req, res) => {
     res.json(response);
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+// Split PDF
+router.post('/:id/split', auth, async (req, res) => {
+  try {
+    const { ranges } = req.body;
+    const document = await Document.findById(req.params.id);
+    
+    if (!document || document.mimeType !== 'application/pdf') {
+      return res.status(400).json({ message: 'Invalid PDF document' });
+    }
+    
+    const filePath = path.join(__dirname, '../uploads', document.name);
+    const pdfBytes = fs.readFileSync(filePath);
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const totalPages = pdfDoc.getPageCount();
+    
+    const rangeLines = ranges.split('\n').filter(line => line.trim());
+    const splitDocs = [];
+    
+    for (let i = 0; i < rangeLines.length; i++) {
+      const range = rangeLines[i].trim();
+      const newPdf = await PDFDocument.create();
+      let pageIndices = [];
+      
+      if (range.includes('-')) {
+        const [start, end] = range.split('-').map(n => parseInt(n.trim()));
+        for (let p = start; p <= end && p <= totalPages; p++) {
+          pageIndices.push(p - 1);
+        }
+      } else {
+        const pageNum = parseInt(range);
+        if (pageNum <= totalPages) {
+          pageIndices.push(pageNum - 1);
+        }
+      }
+      
+      if (pageIndices.length > 0) {
+        const copiedPages = await newPdf.copyPages(pdfDoc, pageIndices);
+        copiedPages.forEach(page => newPdf.addPage(page));
+        
+        const newPdfBytes = await newPdf.save();
+        const fileName = `${Date.now()}-${Math.floor(Math.random() * 1000000)}.pdf`;
+        const newFilePath = path.join(__dirname, '../uploads', fileName);
+        
+        fs.writeFileSync(newFilePath, newPdfBytes);
+        
+        const newDocument = new Document({
+          name: fileName,
+          originalName: `${document.originalName.replace('.pdf', '')}_part${i + 1}.pdf`,
+          mimeType: 'application/pdf',
+          size: newPdfBytes.length,
+          path: `uploads/${fileName}`,
+          folder: document.folder,
+          owner: req.user._id
+        });
+        
+        await newDocument.save();
+        splitDocs.push(newDocument);
+      }
+    }
+    
+    res.json({ message: 'PDF split successfully', documents: splitDocs });
+  } catch (error) {
+    console.error('Error splitting PDF:', error);
+    res.status(500).json({ message: 'Error splitting PDF' });
+  }
+});
+
+// Merge PDFs
+router.post('/merge', auth, async (req, res) => {
+  try {
+    const { pdfIds, fileName, folder } = req.body;
+    
+    if (!pdfIds || pdfIds.length < 2) {
+      return res.status(400).json({ message: 'At least 2 PDFs required for merging' });
+    }
+    
+    const documents = await Document.find({ _id: { $in: pdfIds }, mimeType: 'application/pdf' });
+    
+    if (documents.length !== pdfIds.length) {
+      return res.status(400).json({ message: 'Some PDFs not found' });
+    }
+    
+    const mergedPdf = await PDFDocument.create();
+    
+    for (const doc of documents) {
+      const filePath = path.join(__dirname, '../uploads', doc.name);
+      const pdfBytes = fs.readFileSync(filePath);
+      const pdf = await PDFDocument.load(pdfBytes);
+      const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+      pages.forEach(page => mergedPdf.addPage(page));
+    }
+    
+    const pdfBytes = await mergedPdf.save();
+    const mergedFileName = `${Date.now()}-${Math.floor(Math.random() * 1000000)}.pdf`;
+    const mergedFilePath = path.join(__dirname, '../uploads', mergedFileName);
+    
+    fs.writeFileSync(mergedFilePath, pdfBytes);
+    
+    const mergedDocument = new Document({
+      name: mergedFileName,
+      originalName: fileName || 'merged-document.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.length,
+      path: `uploads/${mergedFileName}`,
+      folder: folder || null,
+      owner: req.user._id
+    });
+    
+    await mergedDocument.save();
+    
+    res.json({ message: 'PDFs merged successfully', document: mergedDocument });
+  } catch (error) {
+    console.error('Error merging PDFs:', error);
+    res.status(500).json({ message: 'Error merging PDFs' });
+  }
+});
+
+// Merge specific pages from PDFs
+router.post('/merge-pages', auth, async (req, res) => {
+  try {
+    const { pages, fileName, folder } = req.body;
+    
+    if (!pages || pages.length === 0) {
+      return res.status(400).json({ message: 'At least 1 page required for merging' });
+    }
+    
+    const pdfIds = [...new Set(pages.map(p => p.pdfId))];
+    const documents = await Document.find({ _id: { $in: pdfIds }, mimeType: 'application/pdf' });
+    
+    const mergedPdf = await PDFDocument.create();
+    
+    for (const pageInfo of pages) {
+      const doc = documents.find(d => d._id.toString() === pageInfo.pdfId);
+      if (!doc) continue;
+      
+      const filePath = path.join(__dirname, '../uploads', doc.name);
+      const pdfBytes = fs.readFileSync(filePath);
+      const pdf = await PDFDocument.load(pdfBytes);
+      
+      const pageIndex = pageInfo.pageNum - 1;
+      if (pageIndex >= 0 && pageIndex < pdf.getPageCount()) {
+        const [copiedPage] = await mergedPdf.copyPages(pdf, [pageIndex]);
+        mergedPdf.addPage(copiedPage);
+      }
+    }
+    
+    const pdfBytes = await mergedPdf.save();
+    const mergedFileName = `${Date.now()}-${Math.floor(Math.random() * 1000000)}.pdf`;
+    const mergedFilePath = path.join(__dirname, '../uploads', mergedFileName);
+    
+    fs.writeFileSync(mergedFilePath, pdfBytes);
+    
+    const mergedDocument = new Document({
+      name: mergedFileName,
+      originalName: fileName || 'merged-pages.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.length,
+      path: `uploads/${mergedFileName}`,
+      folder: folder || null,
+      owner: req.user._id
+    });
+    
+    await mergedDocument.save();
+    
+    res.json({ message: 'Pages merged successfully', document: mergedDocument });
+  } catch (error) {
+    console.error('Error merging pages:', error);
+    res.status(500).json({ message: 'Error merging pages' });
   }
 });
 
