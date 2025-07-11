@@ -455,10 +455,11 @@ router.post('/:id/split', auth, async (req, res) => {
     try {
       pdfDoc = await PDFDocument.load(pdfBytes);
     } catch (error) {
+      console.error('PDF load error:', error.message);
       if (error.message.includes('encrypted')) {
         return res.status(400).json({ message: 'Cannot split encrypted/password-protected PDFs' });
       }
-      throw error;
+      return res.status(500).json({ message: `PDF loading failed: ${error.message}` });
     }
     const totalPages = pdfDoc.getPageCount();
     
@@ -510,7 +511,7 @@ router.post('/:id/split', auth, async (req, res) => {
     res.json({ message: 'PDF split successfully', documents: splitDocs });
   } catch (error) {
     console.error('Error splitting PDF:', error);
-    res.status(500).json({ message: 'Error splitting PDF' });
+    res.status(500).json({ message: `Error splitting PDF: ${error.message}` });
   }
 });
 
@@ -539,10 +540,11 @@ router.post('/merge', auth, async (req, res) => {
       try {
         pdf = await PDFDocument.load(pdfBytes);
       } catch (error) {
+        console.error(`PDF load error for ${doc.originalName}:`, error.message);
         if (error.message.includes('encrypted')) {
           return res.status(400).json({ message: `Cannot merge encrypted PDF: ${doc.originalName}` });
         }
-        throw error;
+        return res.status(500).json({ message: `PDF loading failed for ${doc.originalName}: ${error.message}` });
       }
       
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
@@ -570,7 +572,7 @@ router.post('/merge', auth, async (req, res) => {
     res.json({ message: 'PDFs merged successfully', document: mergedDocument });
   } catch (error) {
     console.error('Error merging PDFs:', error);
-    res.status(500).json({ message: 'Error merging PDFs' });
+    res.status(500).json({ message: `Error merging PDFs: ${error.message}` });
   }
 });
 
@@ -599,10 +601,11 @@ router.post('/merge-pages', auth, async (req, res) => {
       try {
         pdf = await PDFDocument.load(pdfBytes);
       } catch (error) {
+        console.error(`PDF load error for ${doc.originalName}:`, error.message);
         if (error.message.includes('encrypted')) {
           continue; // Skip encrypted PDFs
         }
-        throw error;
+        return res.status(500).json({ message: `PDF loading failed for ${doc.originalName}: ${error.message}` });
       }
       
       const pageIndex = pageInfo.pageNum - 1;
@@ -633,7 +636,7 @@ router.post('/merge-pages', auth, async (req, res) => {
     res.json({ message: 'Pages merged successfully', document: mergedDocument });
   } catch (error) {
     console.error('Error merging pages:', error);
-    res.status(500).json({ message: 'Error merging pages' });
+    res.status(500).json({ message: `Error merging pages: ${error.message}` });
   }
 });
 
