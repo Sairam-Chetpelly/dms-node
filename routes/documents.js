@@ -450,7 +450,16 @@ router.post('/:id/split', auth, async (req, res) => {
     
     const filePath = path.join(__dirname, '../uploads', document.name);
     const pdfBytes = fs.readFileSync(filePath);
-    const pdfDoc = await PDFDocument.load(pdfBytes);
+    
+    let pdfDoc;
+    try {
+      pdfDoc = await PDFDocument.load(pdfBytes);
+    } catch (error) {
+      if (error.message.includes('encrypted')) {
+        return res.status(400).json({ message: 'Cannot split encrypted/password-protected PDFs' });
+      }
+      throw error;
+    }
     const totalPages = pdfDoc.getPageCount();
     
     const rangeLines = ranges.split('\n').filter(line => line.trim());
@@ -525,7 +534,17 @@ router.post('/merge', auth, async (req, res) => {
     for (const doc of documents) {
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      const pdf = await PDFDocument.load(pdfBytes);
+      
+      let pdf;
+      try {
+        pdf = await PDFDocument.load(pdfBytes);
+      } catch (error) {
+        if (error.message.includes('encrypted')) {
+          return res.status(400).json({ message: `Cannot merge encrypted PDF: ${doc.originalName}` });
+        }
+        throw error;
+      }
+      
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach(page => mergedPdf.addPage(page));
     }
@@ -575,7 +594,16 @@ router.post('/merge-pages', auth, async (req, res) => {
       
       const filePath = path.join(__dirname, '../uploads', doc.name);
       const pdfBytes = fs.readFileSync(filePath);
-      const pdf = await PDFDocument.load(pdfBytes);
+      
+      let pdf;
+      try {
+        pdf = await PDFDocument.load(pdfBytes);
+      } catch (error) {
+        if (error.message.includes('encrypted')) {
+          continue; // Skip encrypted PDFs
+        }
+        throw error;
+      }
       
       const pageIndex = pageInfo.pageNum - 1;
       if (pageIndex >= 0 && pageIndex < pdf.getPageCount()) {
